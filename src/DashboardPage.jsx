@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { Bar } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 export default function DashboardPage() {
     const navigate = useNavigate();
@@ -11,6 +15,11 @@ export default function DashboardPage() {
     });
     const [score, setScore] = useState(null);
     const [samples, setSamples] = useState([]);
+    const [violationSummary, setViolationSummary] = useState({
+        no_hairnet: 5,
+        no_gloves: 3,
+        improper_mask: 2
+    });
     const [currentPage, setCurrentPage] = useState(1);
     const perPage = 10;
     const [wsConnected, setWsConnected] = useState(false);
@@ -37,25 +46,41 @@ export default function DashboardPage() {
         async function loadScoreAndSamples() {
             try {
                 const resp = await axios.get(`${apiBase}/score/`, { params: { date: dateQuery } });
-                const data = resp?.data?.data || null; // message, success, data
+                const data = resp?.data?.data || null;
                 if (cancelled) return;
                 setScore(data);
                 if (data?.id) {
-                    const sampResp = await axios.get(`${apiBase}/sample/score/${data.id}`);
+                    const [sampResp, violationResp] = await Promise.all([
+                        axios.get(`${apiBase}/sample/score/${data.id}`),
+                        axios.get(`${apiBase}/violation/summary/score/${data.id}`)
+                    ]);
                     const sampData = sampResp?.data?.data || [];
+                    let violationData = violationResp?.data?.data || null;
+                    // mock data if none returned
+                    if (violationData && Object.keys(violationData).length === 0) {
+                        violationData = {
+                            no_hairnet: 5,
+                            no_gloves: 3,
+                            improper_mask: 2,
+                            
+                        };
+                    }
+                    
                     if (!cancelled) {
                         const safeData = Array.isArray(sampData) ? sampData : [];
                         setSamples(safeData);
-                        setCurrentPage(1); // reset when data changes
+                        setViolationSummary(violationData);
+                        setCurrentPage(1);
                     }
                 } else {
                     setSamples([]);
+                    setViolationSummary(null);
                     setCurrentPage(1);
                 }
             } catch (e) {
-                // minimal error handling
                 setScore(null);
                 setSamples([]);
+                setViolationSummary(null);
             }
         }
         loadScoreAndSamples();
@@ -155,6 +180,76 @@ export default function DashboardPage() {
     }, [samples, currentPage, perPage]);
 
     const totalPages = Math.max(1, Math.ceil(samples.length / perPage));
+
+    const chartData = useMemo(() => {
+        if (!violationSummary) return null;
+
+        const labels = Object.keys(violationSummary).map(key => 
+            key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+        );
+        const values = Object.values(violationSummary);
+
+        return {
+            labels,
+            datasets: [{
+                label: 'Violation Count',
+                data: values,
+                backgroundColor: '#C1E59F',
+                borderColor: '#628141',
+                borderWidth: 2,
+                borderRadius: 6,
+                barThickness: 40
+            }]
+        };
+    }, [violationSummary]);
+
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            },
+            tooltip: {
+                backgroundColor: '#628141',
+                padding: 12,
+                titleFont: {
+                    size: 14,
+                    weight: 'bold'
+                },
+                bodyFont: {
+                    size: 13
+                },
+                cornerRadius: 6
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    stepSize: 1,
+                    color: '#6b7280',
+                    font: {
+                        size: 12
+                    }
+                },
+                grid: {
+                    color: '#e5e7eb'
+                }
+            },
+            x: {
+                ticks: {
+                    color: '#6b7280',
+                    font: {
+                        size: 12
+                    }
+                },
+                grid: {
+                    display: false
+                }
+            }
+        }
+    };
 
     return (
         <div className="min-h-screen bg-white" style={{ fontFamily: 'Arial, sans-serif', color: '#1f2937' }}>
@@ -302,7 +397,15 @@ export default function DashboardPage() {
                     {/* Section 4: Stats */}
                     <section className="border rounded-lg p-4 w-full max-w-[720px]">
                         <h2 className="text-lg mb-3" style={{ fontFamily: 'Times New Roman, Times, serif', color: '#628141' }}>Statistics</h2>
-                        <div className="h-40 flex items-center justify-center text-gray-400">on progress</div>
+                        {!violationSummary || !chartData ? (
+                            <div className="h-64 flex items-center justify-center text-gray-400">
+                                {!score?.id ? 'no data available for selected date' : 'loading violation summary...'}
+                            </div>
+                        ) : (
+                            <div className="h-64">
+                                <Bar data={chartData} options={chartOptions} />
+                            </div>
+                        )}
                     </section>
                 </div>
             </main>
